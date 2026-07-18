@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PDF Tool</title>
+
+<!-- ══════════════ PWA BLOCK 1 of 2 — paste inside <head> ══════════════ -->
+
+<!-- Manifest -->
+<link rel="manifest" href="manifest.webmanifest">
+
+<!-- Theme colour: Android status bar + Windows title bar -->
+<meta name="theme-color" content="#b02a37">
+
+<!-- Favicons (Windows/desktop) -->
+<link rel="icon" href="icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+
+<!-- ── iOS: Safari ignores the manifest, so these are mandatory ── -->
+<link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PDF Tool">
+
+<!-- Windows / legacy Edge tile -->
+<meta name="msapplication-TileColor" content="#b02a37">
+<meta name="msapplication-TileImage" content="icons/icon-192.png">
+
+<style>
+  /* Respect iPhone notch when running standalone */
+  body { padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+
+  /* --- PWA UI chrome (install button, banners) --- */
+  #pwaInstallBtn{
+    position:fixed; right:16px; bottom:16px; z-index:9999; display:none;
+    background:#b02a37; color:#fff; border:0; border-radius:999px;
+    padding:12px 22px; font:600 15px/1 system-ui,sans-serif; cursor:pointer;
+    box-shadow:0 4px 16px rgba(0,0,0,.22);
+  }
+  #pwaInstallBtn:hover{ background:#8f222c; }
+
+  .pwa-bar{
+    position:fixed; left:0; right:0; bottom:0; z-index:9998; display:none;
+    background:#1f2937; color:#fff; padding:14px 16px;
+    font:14px/1.5 system-ui,sans-serif;
+    padding-bottom:calc(14px + env(safe-area-inset-bottom));
+  }
+  .pwa-bar .row{ max-width:720px; margin:0 auto; display:flex; gap:12px; align-items:center; }
+  .pwa-bar button{
+    margin-left:auto; background:#fff; color:#1f2937; border:0;
+    border-radius:8px; padding:8px 16px; font-weight:600; cursor:pointer; flex-shrink:0;
+  }
+  #pwaOfflineToast{
+    position:fixed; top:0; left:0; right:0; z-index:9999; display:none;
+    background:#92400e; color:#fff; text-align:center; padding:8px;
+    font:600 13px system-ui,sans-serif;
+    padding-top:calc(8px + env(safe-area-inset-top));
+  }
+</style>
+<!-- ════════════════════ END PWA BLOCK 1 ════════════════════ -->
+
+<style>
+  /* Placeholder styling — delete this block when you paste your real tool */
+  body{margin:0;font:16px/1.6 system-ui,sans-serif;display:grid;place-items:center;min-height:100dvh;background:#faf7f7;color:#333;text-align:center;padding:24px}
+  code{background:#eee;padding:2px 6px;border-radius:4px;font-size:14px}
+</style>
+</head>
+<body>
+
+<!-- ╔══════════════════════════════════════════════════════════════════╗
+     ║  REPLACE EVERYTHING BETWEEN HERE AND THE CLOSING MARKER WITH     ║
+     ║  THE CONTENTS OF YOUR PDFTOOL.HTML <body>                        ║
+     ╚══════════════════════════════════════════════════════════════════╝ -->
+<main>
+  <h1>PDF Tool</h1>
+  <p>PWA shell is live. Paste your tool's <code>&lt;body&gt;</code> content here,<br>
+     and its CSS/JS into the head above.</p>
+</main>
+<!-- ╚═══════════════════ END OF YOUR TOOL ═══════════════════════════╝ -->
+
+
+<!-- ══════════════ PWA BLOCK 2 of 2 — paste before </body> ══════════════ -->
+
+<div id="pwaOfflineToast">Offline — tool still works, saved locally</div>
+
+<button id="pwaInstallBtn">⬇ Install App</button>
+
+<!-- iOS hint (Safari has no install prompt) -->
+<div class="pwa-bar" id="pwaIosBar">
+  <div class="row">
+    <span>Install: tap <strong>Share</strong> <span style="font-size:17px">&#x2191;</span> then <strong>Add to Home Screen</strong></span>
+    <button onclick="pwaDismiss('ios')">Got it</button>
+  </div>
+</div>
+
+<!-- Update available -->
+<div class="pwa-bar" id="pwaUpdateBar" style="background:#065f46">
+  <div class="row">
+    <span>A new version of this tool is ready.</span>
+    <button id="pwaUpdateBtn">Reload</button>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------- 1. Register the service worker ---------- */
+  let waitingWorker = null;
+
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js')
+        .then(function (reg) {
+          console.log('[PWA] Service worker registered, scope:', reg.scope);
+
+          // An update was found while the page is open
+          reg.addEventListener('updatefound', function () {
+            const nw = reg.installing;
+            if (!nw) return;
+            nw.addEventListener('statechange', function () {
+              if (nw.state === 'installed' && navigator.serviceWorker.controller) {
+                waitingWorker = nw;
+                show('pwaUpdateBar');
+              }
+            });
+          });
+
+          // Check for updates every time the app regains focus
+          document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState === 'visible') reg.update();
+          });
+        })
+        .catch(function (err) {
+          console.warn('[PWA] SW registration failed:', err);
+        });
+
+      // Reload once the new SW takes over
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
+    });
+  }
+
+  document.getElementById('pwaUpdateBtn').addEventListener('click', function () {
+    if (waitingWorker) waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+    hide('pwaUpdateBar');
+  });
+
+  /* ---------- 2. Android / Windows / Desktop install prompt ---------- */
+  let deferredPrompt = null;
+  const installBtn = document.getElementById('pwaInstallBtn');
+
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();               // stop Chrome's own mini-infobar
+    deferredPrompt = e;
+    if (!isStandalone() && !dismissed('install')) installBtn.style.display = 'block';
+  });
+
+  installBtn.addEventListener('click', async function () {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const choice = await deferredPrompt.userChoice;
+    console.log('[PWA] Install choice:', choice.outcome);
+    if (choice.outcome === 'dismissed') pwaDismiss('install');
+    deferredPrompt = null;
+    installBtn.style.display = 'none';
+  });
+
+  window.addEventListener('appinstalled', function () {
+    installBtn.style.display = 'none';
+    deferredPrompt = null;
+    console.log('[PWA] Installed');
+  });
+
+  /* ---------- 3. iOS Safari: no prompt exists, so show instructions ---------- */
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const isSafari = /^((?!chrome|android|crios|fxios|edgios).)*safari/i.test(navigator.userAgent);
+
+  if (isIOS && isSafari && !isStandalone() && !dismissed('ios')) {
+    setTimeout(function () { show('pwaIosBar'); }, 2500);
+  }
+
+  /* ---------- 4. Online / offline indicator ---------- */
+  const toast = document.getElementById('pwaOfflineToast');
+  function netState() { toast.style.display = navigator.onLine ? 'none' : 'block'; }
+  window.addEventListener('online', netState);
+  window.addEventListener('offline', netState);
+  netState();
+
+  /* ---------- helpers ---------- */
+  function isStandalone() {
+    return window.matchMedia('(display-mode: standalone)').matches ||
+           window.navigator.standalone === true;
+  }
+  function show(id) { document.getElementById(id).style.display = 'block'; }
+  function hide(id) { document.getElementById(id).style.display = 'none'; }
+  function dismissed(key) {
+    try { return localStorage.getItem('pwa_dismiss_' + key) === '1'; } catch (e) { return false; }
+  }
+  window.pwaDismiss = function (key) {
+    try { localStorage.setItem('pwa_dismiss_' + key, '1'); } catch (e) {}
+    hide(key === 'ios' ? 'pwaIosBar' : 'pwaInstallBtn');
+    if (key === 'install') document.getElementById('pwaInstallBtn').style.display = 'none';
+  };
+})();
+</script>
+<!-- ════════════════════ END PWA BLOCK 2 ════════════════════ -->
+
+</body>
+</html>
